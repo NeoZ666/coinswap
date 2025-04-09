@@ -6,6 +6,7 @@
 
 use std::{collections::HashMap, iter};
 
+use bitcoin::p2p::address;
 use bitcoin::{
     absolute::LockTime, transaction::Version, Address, Amount, OutPoint, ScriptBuf, Sequence,
     Transaction, TxIn, TxOut, Txid, Witness,
@@ -221,6 +222,123 @@ impl Wallet {
         result
     }
 
+    /// Split a UTXO or set of UTXOs into multiple outputs for the last maker
+    fn create_split_swap_txes(
+        &mut self,
+        coinswap_amount: Amount,
+        num_splits: usize,
+        fee_rate: Amount,
+        // Do we need a flag to communicate with the last maker to indicate that this is a split tx?
+        // or is it enough to just use the number of splits? --> But how do we communicate this specifically to the last maker?
+        // With the current design, the last maker can bydefault use this function, if num_splits is 1, it would be a vanilla coinswap anyway.
+    ) -> Result<CreateFundingTxesResult, WalletError> {
+        // Lock UTXOs that are not meant for spending
+        self.lock_unspendable_utxos()?;
+    
+        // Generate random split amounts that sum to coinswap_amount
+        let split_amounts = Wallet::generate_amount_fractions(num_splits, coinswap_amount)?;
+    
+        // Get addresses for each split
+        let mut output_addresses: Vec<Address> = Vec::with_capacity(num_splits);
+        for _ in 0..num_splits {
+            output_addresses.push(self.get_next_external_address()?);
+        }
+    
+        let mut funding_txes = Vec::<Transaction>::new();
+        let mut payment_output_positions = Vec::<u32>::new();
+        let mut total_miner_fee = 0;
+    
+        // Assume Coinselection selects 'n' UTXOs with amount=split_amount for each
+        // TODO : Apply above logic to Coinselection to create a 2D array for selected UTXOs for each swap
+        // i.e num_splits = 3
+        // selected_utxo = [[utxo1, utxo2, utxo3], [utxo4, utxo5, utxo6], [utxo7, utxo8, utxo9]]
+
+        // Assume Coinselection takes an array of amounts i.e split_amounts and NOT a single coinswap amount, with this, 
+        // you won't need the num_splits as an input.
+        let selected_utxo = self.coin_select(
+            coinswap_amount,
+            //  num_splits,
+            fee_rate.to_btc(),
+        )?;
+    
+        // Create destinations vector for spend_coins API
+        let destinations: Vec<(Address, Amount)> = output_addresses
+            .into_iter()
+            .zip(split_amounts)
+            .map(|(addr, amount)| (addr, Amount::from_sat(amount)))
+            .collect();
+    
+        // Create and sign transaction using spend_coins API
+        // Transaction {
+        //     inputs: [
+        //         input1 (e.g. 1.1 BTC UTXO)
+        //     ],
+        //     outputs: [
+        //         output1: 0.4 BTC -> addr1,
+        //         output2: 0.35 BTC -> addr2, 
+        //         output3: 0.25 BTC -> addr3,
+        //         output4: 0.098 BTC -> change_address, // Remaining minus fees
+        //     ]
+        // }
+        let split_tx = self.spend_coins(
+            &selected_utxo,
+            Destination::Multi(destinations),
+            fee_rate.to_btc()
+        )?;
+    
+        // Record transaction details
+        funding_txes.push(split_tx);
+        payment_output_positions.extend(0..num_splits as u32);
+        total_miner_fee += fee_rate.to_sat();
+    
+        Ok(CreateFundingTxesResult {
+            funding_txes,
+            payment_output_positions,
+            total_miner_fee,
+        })
+    }
+
+    /// Merge multiple UTXOs into a single output for the taker
+    fn create_merge_swap_txes(
+        &mut self,
+        coinswap_amount: Amount,
+        fee_rate: Amount,
+    ) -> Result<CreateFundingTxesResult, WalletError> {
+        // Lock UTXOs that are not meant for spending
+        self.lock_unspendable_utxos()?;
+    
+        let mut funding_txes = Vec::<Transaction>::new();
+        let mut payment_output_positions = Vec::<u32>::new();
+        let mut total_miner_fee = 0;
+    
+        // Get destination address for merged output
+        let destination = self.get_next_external_address()?;
+    
+        // Select UTXOs covering the total amount plus fees
+        let selected_utxo = self.coin_select(
+            coinswap_amount + fee_rate,
+            fee_rate.to_btc()
+        )?;
+    
+        // Create and sign transaction using spend_coins API
+        let merge_tx = self.spend_coins(
+            &selected_utxo,
+            Destination::Sweep(destination),
+            fee_rate.to_btc()
+        )?;
+    
+        // Record transaction details
+        funding_txes.push(merge_tx);
+        payment_output_positions.push(0);  // Payment is always first output in Sweep
+        total_miner_fee += fee_rate.to_sat();
+    
+        Ok(CreateFundingTxesResult {
+            funding_txes,
+            payment_output_positions,
+            total_miner_fee,
+        })
+    }
+    
     fn create_mostly_sweep_txes_with_one_tx_having_change(
         &self,
         coinswap_amount: Amount,
