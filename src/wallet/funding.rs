@@ -225,7 +225,8 @@ impl Wallet {
     fn create_split_swap_txes(
         &mut self,
         coinswap_amount: Amount,
-        num_splits: usize,
+        // num_splits: usize,
+        destinations: &[Address],
         fee_rate: Amount,
         // Do we need a flag to communicate with the last maker to indicate that this is a split tx?
         // or is it enough to just use the number of splits? --> But how do we communicate this specifically to the last maker?
@@ -237,19 +238,16 @@ impl Wallet {
         // Lock UTXOs that are not meant for spending
         self.lock_unspendable_utxos()?;
 
+        let num_splits = destinations.len();
+
         // Generate random split amounts that sum to coinswap_amount
         let split_amounts = Wallet::generate_amount_fractions(num_splits, coinswap_amount)?;
-
-        // Get addresses for each split
-        let mut output_addresses: Vec<Address> = Vec::with_capacity(num_splits);
-        for _ in 0..num_splits {
-            output_addresses.push(self.get_next_external_address()?);
-        }
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
 
+        // Method 1 :-
         // Assume Coinselection selects 'n' UTXOs with amount=split_amount for each
         // TODO : Apply above logic to Coinselection to create a 2D array for selected UTXOs for each swap
         // i.e num_splits = 3
@@ -263,6 +261,7 @@ impl Wallet {
             fee_rate.to_btc(),
         )?;
 
+        // Method 2 :-
         //    // A 2D array to hold selected UTXOs for each split
         //     let mut selected_utxos_per_split = Vec::new();
 
@@ -327,10 +326,10 @@ impl Wallet {
         // }
 
         // Create destinations vector for spend_coins API
-        let destinations: Vec<(Address, Amount)> = output_addresses
-            .into_iter()
+        let destinations: Vec<(Address, Amount)> = destinations
+            .iter()
             .zip(split_amounts)
-            .map(|(addr, amount)| (addr, Amount::from_sat(amount)))
+            .map(|(addr, amount)| (addr.clone(), Amount::from_sat(amount)))
             .collect();
 
         // Create and sign transaction using spend_coins API
