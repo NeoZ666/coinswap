@@ -225,6 +225,7 @@ impl Wallet {
     fn create_split_swap_txes(
         &mut self,
         coinswap_amount: Amount,
+        // The num_splits is the number of the split utxo sets to be sent to N destination public addresses of maker(s)
         // num_splits: usize,
         destinations: &[Address],
         fee_rate: Amount,
@@ -271,15 +272,7 @@ impl Wallet {
         //         selected_utxos_per_split.push(selected_utxo);
         //     }
 
-        //     for (split_idx, selected_utxos) in selected_utxos_per_split.iter().enumerate() {
-        //         let total_input = selected_utxos.iter().fold(Amount::ZERO, |acc, (utxo, _)| {
-        //             acc.checked_add(utxo.amount).expect("Amount sum overflowed")
-        //         });
-
-        //         log::info!(
-        //             "\nSplit {} (Maker {}):",
-        //             split_idx + 1,
-        //             split_idx + 1        for (split_idx, selected_utxos) in selected_utxos_per_split.iter().enumerate() {
+        //         for (split_idx, selected_utxos) in selected_utxos_per_split.iter().enumerate() {
         //                 let total_input = selected_utxos.iter().fold(Amount::ZERO, |acc, (utxo, _)| {
         //                     acc.checked_add(utxo.amount).expect("Amount sum overflowed")
         //                 });
