@@ -122,6 +122,84 @@ impl Wallet {
         Ok(output_values)
     }
 
+    /// Given two amounts `target` and `split`, pick splits n_target, n_change ∈ [2..=max_splits]  
+    /// that minimize |(target / n_target) - (split / n_change)|.
+    /// Returns (n_target, n_change, size_per_output_for_target, size_per_output_for_change).
+    fn pick_splits(target: f64, split: f64, max_splits: u64) -> (u64, u64, f64, f64, Vec<f64>, Vec<f64>) {
+        let mut best = {
+            let size_target = target / 2.0;
+            let size_change = split / 2.0;
+            (2, 2, size_target, size_change, (size_target - size_change).abs())
+            // best.0 = n_target
+            // best.1 = n_change
+            // best.2 = size_target
+            // best.3 = size_change
+            // best.4 = diff
+        };
+
+        let mut target_splits = Vec::new();
+        let mut change_splits = Vec::new();
+
+        for n_target in 2..=max_splits {
+            for n_change in 2..=max_splits {
+                let size_target = target / (n_target as f64);
+                let size_change = split / (n_change as f64);
+                let diff = (size_target - size_change).abs();
+
+                if diff < best.4 {
+                    best = (n_target, n_change, size_target, size_change, diff);
+                }
+
+                if diff == 0.0 {
+                    target_splits = vec![size_target; n_target as usize];
+                    change_splits = vec![size_change; n_change as usize];                
+                    return (n_target, n_change, size_target, size_change, target_splits, change_splits);
+                }
+            }
+        }
+
+        // Handle case where difference is too large
+        if best.4 / best.2 > 0.1 {  // If difference > 10% of target size
+            let x = best.2 - best.3;
+            let mut total_acc = 0.0;
+        
+            // Fill target splits for the first `n_change` splits
+            for _ in 0..best.1 {
+                let split_value = best.2 - x;
+                target_splits.push(split_value);
+                total_acc += split_value;
+            }
+        
+            // Calculate the remaining amount to be split
+            let remaining = target - total_acc;
+        
+            // Generate fractions for the remaining amount
+            let remaining_splits = Wallet::generate_amount_fractions((best.0 - best.1) as usize, Amount::from_sat(remaining as u64))
+                .expect("Failed to generate amount fractions");
+        
+            // Append the generated fractions to `target_splits`
+            for split in remaining_splits {
+                target_splits.push(split as f64);
+            }
+        
+            // Fill change splits as before
+            for _ in 0..best.1 {
+                change_splits.push(best.3);
+            }
+        } else {
+            // If difference is acceptable, use uniform splits
+            for _ in 0..best.0 {
+                target_splits.push(best.2);
+            }
+            for _ in 0..best.1 {
+                change_splits.push(best.3);
+            }
+        }
+
+        (best.0, best.1, best.2, best.3, target_splits, change_splits)
+        
+    }
+
     /// This function creates funding transactions with random amounts
     /// The total `coinswap_amount` is randomly distributed among number of destinations.
     fn create_funding_txes_random_amounts(
@@ -219,6 +297,31 @@ impl Wallet {
         }
 
         result
+    }
+
+    fn create_regular_swap(
+        &mut self,
+        coinswap_amount: Amount,
+        destinations: &[Address],
+        fee_rate: Amount,
+    ) -> Result<CreateFundingTxesResult, WalletError> {
+        // Unlock all unspent UTXOs
+        self.rpc.unlock_unspent_all()?;
+
+        // Lock UTXOs that are not meant for spending
+        self.lock_unspendable_utxos()?;
+
+        let selected_utxo = self.coin_select(coinswap_amount, fee_rate.to_btc())?;
+
+        let destination = Destination::Multi(vec![(destinations[0].clone(), coinswap_amount)]);
+
+        let funding_tx = self.spend_coins(&selected_utxo, destination, fee_rate.to_btc())?;
+
+        Ok(CreateFundingTxesResult {
+            funding_txes: vec![funding_tx],
+            payment_output_positions: vec![0],
+            total_miner_fee: fee_rate.to_sat(),
+        })
     }
 
     /// Split a UTXO or set of UTXOs into multiple outputs for the last maker
