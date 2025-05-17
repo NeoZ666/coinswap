@@ -15,8 +15,8 @@ use std::{assert_eq, sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Malice 1: Taker Broadcasts contract transactions prematurely.
 ///
-/// The Makers identify the situation and gets their money back via contract txs. This is
-/// a potential DOS on Makers. But Taker would loose money too for doing this.
+/// The Makers identify the situation and get their money back via contract txs. This is
+/// a potential DOS on Makers. But Taker would lose money too for doing this.
 #[test]
 fn malice1_taker_broadcast_contract_prematurely() {
     // ---- Setup ----
@@ -26,20 +26,22 @@ fn malice1_taker_broadcast_contract_prematurely() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::BroadcastContractAfterFullSetup];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::BroadcastContractAfterFullSetup,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
     warn!("Running Test: Taker broadcasts contract transaction prematurely");
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -80,9 +82,8 @@ fn malice1_taker_broadcast_contract_prematurely() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
@@ -105,7 +106,7 @@ fn malice1_taker_broadcast_contract_prematurely() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -120,6 +121,17 @@ fn malice1_taker_broadcast_contract_prematurely() {
     directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
+
+    ///////////////////
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
+    ///////////////
 
     //-------- Fee Tracking and Workflow:------------
     //
@@ -142,7 +154,7 @@ fn malice1_taker_broadcast_contract_prematurely() {
 
     // After Swap checks:
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,

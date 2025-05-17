@@ -16,8 +16,8 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 /// ABORT 3: Maker Drops After Setup
 /// Case 3: CloseAtHashPreimage
 ///
-/// Maker closes connection at hash preimage handling. Funding txs are already broadcasted.
-/// The Maker will loose contract txs fees in that case, so it's not a malice.
+/// Maker closes the connection at hash preimage handling. Funding txs are already broadcasted.
+/// The Maker will lose contract txs fees in that case, so it's not malice.
 /// Taker waits for the response until timeout. Aborts if the Maker doesn't show up.
 #[test]
 fn abort3_case3_close_at_hash_preimage_handover() {
@@ -29,20 +29,22 @@ fn abort3_case3_close_at_hash_preimage_handover() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
     warn!("Running Test: Maker closes conneciton at hash preimage handling");
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -83,9 +85,8 @@ fn abort3_case3_close_at_hash_preimage_handover() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
@@ -108,7 +109,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -125,6 +126,17 @@ fn abort3_case3_close_at_hash_preimage_handover() {
     directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
+
+    ///////////////////
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
+    ///////////////
 
     //-------- Fee Tracking and Workflow:--------------------------------------------------------------------------
     //
@@ -159,7 +171,7 @@ fn abort3_case3_close_at_hash_preimage_handover() {
 
     // After Swap checks:
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,

@@ -16,9 +16,9 @@ use std::{
 use test_framework::*;
 
 /// Abort 1: TAKER Drops After Full Setup.
-/// This test demonstrates the situation where the Taker drops connection after broadcasting all the
-/// funding transactions. The Makers identifies this and waits for a timeout (5mins in prod, 30 secs in test)
-/// for the Taker to come back. If the Taker doesn't come back within timeout, the Makers broadcasts the contract
+/// This test demonstrates the situation where the Taker drops the connection after broadcasting all the
+/// funding transactions. The Makers identify this and wait for a timeout (5mins in prod, 30 secs in test)
+/// for the Taker to come back. If the Taker doesn't come back within timeout, the Makers broadcast the contract
 /// transactions and reclaims their funds via timelock.
 ///
 /// The Taker after coming live again will see unfinished coinswaps in his wallet. He can reclaim his funds via
@@ -33,20 +33,22 @@ fn test_stop_taker_after_setup() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::DropConnectionAfterFullSetup];
+
     // Initiate test framework, Makers.
     // Taker has a special behavior DropConnectionAfterFullSetup.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::DropConnectionAfterFullSetup,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
     warn!("Running Test: Taker Cheats on Everybody.");
-
+    let taker = &mut takers[0];
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -87,9 +89,8 @@ fn test_stop_taker_after_setup() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
@@ -112,12 +113,12 @@ fn test_stop_taker_after_setup() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
@@ -128,6 +129,17 @@ fn test_stop_taker_after_setup() {
     directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
+
+    ///////////////////
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
+    ///////////////
 
     //Run Recovery script
     // TODO: do something about this?
@@ -163,7 +175,7 @@ fn test_stop_taker_after_setup() {
     // +------------------+------------------------------------+---------------------+--------------------+----------------------------+
     //
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,

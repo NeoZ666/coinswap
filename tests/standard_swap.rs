@@ -28,22 +28,20 @@ fn test_standard_coinswap() {
         ((16102, Some(19052)), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::Normal];
     let connection_type = ConnectionType::CLEARNET;
 
     // Initiate test framework, Makers and a Taker with default behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
-        TestFramework::init(
-            makers_config_map.into(),
-            TakerBehavior::Normal,
-            connection_type,
-        );
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
+        TestFramework::init(makers_config_map.into(), taker_behavior, connection_type);
 
     warn!("Running Test: Standard Coinswap Procedure");
     let bitcoind = &test_framework.bitcoind;
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance =
-        fund_and_verify_taker(&mut taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
+        fund_and_verify_taker(taker, bitcoind, 3, Amount::from_btc(0.05).unwrap());
 
     // Fund the Maker with 4 utxos of 0.05 btc each and do basic checks on the balance.
     let makers_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
@@ -75,9 +73,8 @@ fn test_standard_coinswap() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
@@ -100,7 +97,7 @@ fn test_standard_coinswap() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -137,9 +134,17 @@ fn test_standard_coinswap() {
     // | **Maker16102** | 500,000 - 463,500 - 3,000 = +33,500                               |
     // | **Maker6102**  | 465,384 - 438,642 - 3,000 = +21,858                               |
 
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
     //  After Swap Asserts
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,
@@ -152,7 +157,7 @@ fn test_standard_coinswap() {
 
     let taker_wallet_mut = taker.get_wallet_mut();
     let swap_coins = taker_wallet_mut
-        .list_incoming_swap_coin_utxo_spend_info(None)
+        .list_incoming_swap_coin_utxo_spend_info()
         .unwrap();
 
     let addr = taker_wallet_mut.get_next_internal_addresses(1).unwrap()[0].to_owned();
@@ -170,7 +175,8 @@ fn test_standard_coinswap() {
     bitcoind.client.send_raw_transaction(&tx).unwrap();
     generate_blocks(bitcoind, 1);
 
-    let balances = taker_wallet_mut.get_balances(None).unwrap();
+    taker_wallet_mut.sync().unwrap();
+    let balances = taker_wallet_mut.get_balances().unwrap();
 
     assert_eq!(balances.swap, Amount::ZERO);
     assert_eq!(balances.regular, Amount::from_btc(0.14934642).unwrap());

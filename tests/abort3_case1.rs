@@ -18,7 +18,7 @@ use test_framework::*;
 /// ABORT 3: Maker Drops After Setup
 /// Case 1: CloseAtContractSigsForRecvrAndSender
 ///
-/// Maker closes connection after receiving a `RespContractSigsForRecvrAndSender` and doesn't broadcasts it's funding txs.
+/// Maker closes the connection after receiving a `RespContractSigsForRecvrAndSender` and doesn't broadcast its funding txs.
 /// Taker wait until a timeout (10ses for test, 5mins for prod) and starts recovery after that.
 // This is problematic. Needs more detailed thought.
 #[test]
@@ -26,28 +26,31 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     // ---- Setup ----
 
     // 6102 is naughty. And theres not enough makers.
+    let naughty = 6102;
     let makers_config_map = [
         (
-            (6102, None),
+            (naughty, None),
             MakerBehavior::CloseAtContractSigsForRecvrAndSender,
         ),
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
     warn!("Running Test: Maker closes connection after receiving a ContractSigsForRecvrAndSender");
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -88,9 +91,8 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
@@ -113,7 +115,7 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -128,6 +130,17 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
     directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
+
+    ///////////////////
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
+    ///////////////
 
     // -------- Fee Tracking and Workflow --------
     //
@@ -185,13 +198,13 @@ fn abort3_case1_close_at_contract_sigs_for_recvr_and_sender() {
 
     // Maker6102 gets banned for being naughty.
     assert_eq!(
-        format!("127.0.0.1:{}", 6102),
+        format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()
     );
 
     // After Swap checks:
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,

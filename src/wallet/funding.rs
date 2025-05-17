@@ -15,7 +15,7 @@ use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
-use crate::taker::api::MINER_FEE;
+use crate::{taker::api::MINER_FEE, wallet::Destination};
 
 use super::Wallet;
 
@@ -32,7 +32,7 @@ impl Wallet {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
     pub(crate) fn create_funding_txes(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
@@ -58,7 +58,7 @@ impl Wallet {
         //     return ret;
         // }
 
-        log::info!("failed to create funding txes with any method {:?}", ret);
+        log::info!("failed to create funding txes with any method {ret:?}");
         ret
     }
 
@@ -122,112 +122,103 @@ impl Wallet {
         Ok(output_values)
     }
 
-    /// This function creates funding txes by
-    /// Randomly generating some satoshi amounts and send them into
-    /// walletcreatefundedpsbt to create txes that create change
+    /// This function creates funding transactions with random amounts
+    /// The total `coinswap_amount` is randomly distributed among number of destinations.
     fn create_funding_txes_random_amounts(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let change_addresses = self.get_next_internal_addresses(destinations.len() as u32)?;
-
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
+        // Flow of Lock Step 1. Unlock all unspent UTXOs
+        self.rpc.unlock_unspent_all()?;
+
+        // FLow of Lock Step 2. Lock all unspendable UTXOs
         self.lock_unspendable_utxos()?;
 
         let mut funding_txes = Vec::<Transaction>::new();
         let mut payment_output_positions = Vec::<u32>::new();
         let mut total_miner_fee = 0;
-        for ((address, &output_value), change_address) in destinations
-            .iter()
-            .zip(output_values.iter())
-            .zip(change_addresses.iter())
-        {
-            let mut outputs = HashMap::<String, Amount>::new();
-            outputs.insert(address.to_string(), Amount::from_sat(output_value));
+        let mut locked_utxos = Vec::new();
 
-            let fee = fee_rate;
-            let remaining = Amount::from_sat(output_value);
-            let selected_utxo = self.coin_select(remaining)?;
-            let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
-                acc.checked_add(unspet.amount)
-                    .expect("Amount sum overflowed")
-            });
-            let change_amount = total_input_amount.checked_sub(remaining + fee);
-            let mut tx_outs = vec![TxOut {
-                value: Amount::from_sat(output_value),
-                script_pubkey: address.script_pubkey(),
-            }];
+        // Here, we are gonna use a closure to ensure proper cleanup on error (since we need a rollback)
+        let result = (|| {
+            for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
+                let remaining = Amount::from_sat(output_value);
+                let selected_utxo = self.coin_select(remaining, fee_rate.to_btc())?;
 
-            if let Some(change) = change_amount {
-                tx_outs.push(TxOut {
-                    value: change,
-                    script_pubkey: change_address.script_pubkey(),
-                });
-            }
-            let tx_inputs = selected_utxo
-                .iter()
-                .map(|(unspent, _)| TxIn {
-                    previous_output: OutPoint::new(unspent.txid, unspent.vout),
-                    sequence: Sequence(0),
-                    witness: Witness::new(),
-                    script_sig: ScriptBuf::new(),
-                })
-                .collect::<Vec<_>>();
-
-            // Set the Anti-Fee-Snipping locktime
-            let current_height = self.rpc.get_block_count()?;
-
-            let lock_time = LockTime::from_height(current_height as u32)?;
-
-            let actual_fee = total_input_amount
-                - (tx_outs.iter().fold(Amount::ZERO, |a, txo| {
-                    a.checked_add(txo.value)
-                        .expect("output amount sumation overflowred")
-                }));
-
-            let mut funding_tx = Transaction {
-                input: tx_inputs,
-                output: tx_outs,
-                lock_time,
-                version: Version::TWO,
-            };
-
-            let mut input_info = selected_utxo
-                .iter()
-                .map(|(_, spend_info)| spend_info.clone());
-            self.sign_transaction(&mut funding_tx, &mut input_info)?;
-            let tx_size = funding_tx.weight().to_vbytes_ceil();
-            let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
-
-            log::info!(
-                "Created Funding tx, txid : {} | Feerate: {:.2} sats/vb",
-                funding_tx.compute_txid(),
-                actual_feerate
-            );
-
-            self.rpc.lock_unspent(
-                &funding_tx
-                    .input
+                let outpoints: Vec<OutPoint> = selected_utxo
                     .iter()
-                    .map(|vin| vin.previous_output)
-                    .collect::<Vec<OutPoint>>(),
-            )?;
+                    .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                    .collect();
+                // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
+                self.rpc.lock_unspent(&outpoints)?;
+                // Flow of Lock Step 4. Store the locked UTXOs for later unlocking in case of error
+                locked_utxos.extend(outpoints);
 
-            let payment_pos = 0;
+                let total_input_amount =
+                    selected_utxo
+                        .iter()
+                        .fold(Amount::ZERO, |acc, (unspent, _)| {
+                            acc.checked_add(unspent.amount)
+                                .expect("Amount sum overflowed")
+                        });
 
-            funding_txes.push(funding_tx);
-            payment_output_positions.push(payment_pos);
-            total_miner_fee += fee_rate.to_sat();
+                // Here, prepare coins for spend_coins API, since this API would require owned data to avoid lifetime issues
+                let coins_to_spend = selected_utxo
+                    .iter()
+                    .map(|(unspent, spend_info)| (unspent.clone(), spend_info.clone()))
+                    .collect::<Vec<_>>();
+
+                // Create destination with output - currently, destination is an array with a single address, i.e only a single transaction.
+                let destination =
+                    Destination::Multi(vec![(address.clone(), Amount::from_sat(output_value))]);
+
+                // Creates and Signs Transactions via the spend_coins API
+                let funding_tx =
+                    self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
+
+                // The actual fee is the difference between the sum of output amounts from the total input amount
+                let actual_fee = total_input_amount
+                    - (funding_tx.output.iter().fold(Amount::ZERO, |a, txo| {
+                        a.checked_add(txo.value)
+                            .expect("output amount summation overflowed")
+                    }));
+
+                let tx_size = funding_tx.weight().to_vbytes_ceil();
+                // Note : The feerates are sats/vbyte
+                let actual_feerate = actual_fee.to_sat() as f32 / tx_size as f32;
+
+                log::info!(
+                    "Created Funding tx, txid: {} | Size: {} vB | Fee: {} sats | Feerate: {:.2} sat/vB",
+                    funding_tx.compute_txid(),
+                    tx_size,
+                    actual_fee.to_sat(),
+                    actual_feerate
+                );
+
+                // Record this transaction in our results.
+                let payment_pos = 0; // assuming the payment output position is 0
+
+                funding_txes.push(funding_tx);
+                payment_output_positions.push(payment_pos);
+                total_miner_fee += fee_rate.to_sat();
+            }
+            Ok(CreateFundingTxesResult {
+                funding_txes,
+                payment_output_positions,
+                total_miner_fee,
+            })
+        })();
+
+        // FLow of Lock Step 5. We unlock the UTXOs on error i.e a rollback mechanism, OR keep locked on success
+        if result.is_err() {
+            self.rpc.unlock_unspent(&locked_utxos)?;
         }
 
-        Ok(CreateFundingTxesResult {
-            funding_txes,
-            payment_output_positions,
-            total_miner_fee,
-        })
+        result
     }
 
     fn create_mostly_sweep_txes_with_one_tx_having_change(
@@ -386,7 +377,7 @@ impl Wallet {
     }
 
     fn create_funding_txes_utxo_max_sends(
-        &self,
+        &mut self,
         coinswap_amount: Amount,
         destinations: &[Address],
         fee_rate: Amount,
@@ -406,7 +397,7 @@ impl Wallet {
 
         let remaining = coinswap_amount;
 
-        let selected_utxo = self.coin_select(remaining + fee)?;
+        let selected_utxo = self.coin_select(remaining + fee, fee_rate.to_btc())?;
 
         let total_input_amount = selected_utxo.iter().fold(Amount::ZERO, |acc, (unspet, _)| {
             acc.checked_add(unspet.amount)
@@ -456,7 +447,7 @@ impl Wallet {
         let total_tx_inputs_len = selected_utxo.len();
         if total_tx_inputs_len < destinations.len() {
             return Err(WalletError::General(
-                "not enough UTXOs found, cant use this method".to_string(),
+                "Not enough UTXOs found, can't use this method".to_string(),
             ));
         }
 
@@ -480,10 +471,8 @@ impl Wallet {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
-        let all_utxos = self.get_all_utxo()?;
-
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info(Some(&all_utxos))?;
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info(Some(&all_utxos))?;
+        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info()?;
+        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info()?;
         seed_coin_utxo.append(&mut swap_coin_utxo);
 
         let mut list_unspent_result = seed_coin_utxo;

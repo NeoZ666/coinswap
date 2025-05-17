@@ -13,10 +13,10 @@ use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Malice 2: Maker Broadcasts contract transactions prematurely.
 ///
-/// The Taker and other Makers identify the situation and gets their money back via contract txs. This is
-/// a potential DOS on other Makers. But the attacker Maker would loose money too in the process.
+/// The Taker and other Makers identify the situation and get their money back via contract txs. This is
+/// a potential DOS on other Makers. But the attacker Maker would lose money too in the process.
 ///
-/// This case is hard to "blame". As the contract transactions is available to both the Makers, its not identifiable
+/// This case is hard to "blame". As the contract transactions are available to both the Makers, it's not identifiable
 /// which Maker is the culprit. Taker does not ban in this case.
 #[test]
 fn malice2_maker_broadcast_contract_prematurely() {
@@ -27,18 +27,20 @@ fn malice2_maker_broadcast_contract_prematurely() {
         ((16102, None), MakerBehavior::Normal),
     ];
 
+    let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut taker, makers, directory_server_instance, block_generation_handle) =
+    let (test_framework, mut takers, makers, directory_server_instance, block_generation_handle) =
         TestFramework::init(
             makers_config_map.into(),
-            TakerBehavior::Normal,
+            taker_behavior,
             ConnectionType::CLEARNET,
         );
 
     // Fund the Taker  with 3 utxos of 0.05 btc each and do basic checks on the balance
+    let taker = &mut takers[0];
     let org_taker_spend_balance = fund_and_verify_taker(
-        &mut taker,
+        taker,
         &test_framework.bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
@@ -79,9 +81,8 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
             // Check balance after setting up maker server.
             let wallet = maker.wallet.read().unwrap();
-            let all_utxos = wallet.get_all_utxo().unwrap();
 
-            let balances = wallet.get_balances(Some(&all_utxos)).unwrap();
+            let balances = wallet.get_balances().unwrap();
 
             assert_eq!(balances.regular, Amount::from_btc(0.14999).unwrap());
             assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
@@ -104,7 +105,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
     };
     taker.do_coinswap(swap_params).unwrap();
 
-    // After Swap is done,  wait for maker threads to conclude.
+    // After Swap is done, wait for maker threads to conclude.
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
@@ -119,6 +120,17 @@ fn malice2_maker_broadcast_contract_prematurely() {
     directory_server_instance.shutdown.store(true, Relaxed);
 
     thread::sleep(Duration::from_secs(10));
+
+    ///////////////////
+    let taker_wallet = taker.get_wallet_mut();
+    taker_wallet.sync().unwrap();
+
+    // Synchronize each maker's wallet.
+    for maker in makers.iter() {
+        let mut wallet = maker.get_wallet().write().unwrap();
+        wallet.sync().unwrap();
+    }
+    ///////////////
 
     // -------- Fee Tracking and Workflow --------
     //
@@ -170,7 +182,7 @@ fn malice2_maker_broadcast_contract_prematurely() {
 
     // After Swap checks:
     verify_swap_results(
-        &taker,
+        taker,
         &makers,
         org_taker_spend_balance,
         org_maker_spend_balances,

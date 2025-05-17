@@ -1,6 +1,6 @@
-//! Taker configuration. Controlling various behavior.
+//! Taker configuration. Controlling various behaviors.
 //!
-//!  Represents the configuration options for the Taker module, controlling behaviors
+//! Represents the configuration options for the Taker module, controlling behaviors
 //! such as refund locktime, connection attempts, sleep delays, and timeouts.
 
 use crate::utill::{get_taker_dir, parse_field, parse_toml, ConnectionType};
@@ -28,7 +28,7 @@ impl Default for TakerConfig {
             socks_port: 9050,
             tor_auth_password: "".to_string(),
             directory_server_address:
-                "ri3t5m2na2eestaigqtxm3f4u7njy65aunxeh7aftgid3bdeo3bz65qd.onion:8080".to_string(),
+                "kizqnaslcb2r3mbk2vm77bdff3madcvddntmaaz2htmkyuw7sgh4ddqd.onion:8080".to_string(),
             connection_type: if cfg!(feature = "integration-test") {
                 ConnectionType::CLEARNET
             } else {
@@ -42,8 +42,8 @@ impl TakerConfig {
     /// Constructs a [TakerConfig] from a specified data directory. Or create default configs and load them.
     ///
     /// The maker(/taker).toml file should exist at the provided data-dir location.
-    /// Or else, a new default-config will be loaded and created at given data-dir location.
-    /// If no data-dir is provided, a default config will be created at default data-dir location.
+    /// Or else, a new default-config will be loaded and created at the given data-dir location.
+    /// If no data-dir is provided, a default config will be created at the default data-dir location.
     ///
     /// For reference of default config checkout `./taker.toml` in repo folder.
     ///
@@ -94,9 +94,14 @@ impl TakerConfig {
         let toml_data = format!(
             "control_port = {}
 socks_port = {}
+tor_auth_password = {}
 directory_server_address = {}
 connection_type = {:?}",
-            self.control_port, self.socks_port, self.directory_server_address, self.connection_type
+            self.control_port,
+            self.socks_port,
+            self.tor_auth_password,
+            self.directory_server_address,
+            self.connection_type
         );
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
         let mut file = std::fs::File::create(path)?;
@@ -121,7 +126,7 @@ mod tests {
     fn create_temp_config(contents: &str, file_name: &str) -> PathBuf {
         let file_path = PathBuf::from(file_name);
         let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "{}", contents).unwrap();
+        writeln!(file, "{contents}").unwrap();
         file_path
     }
 
