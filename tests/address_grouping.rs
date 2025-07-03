@@ -42,10 +42,14 @@ fn test_address_grouping_behavior() {
 
     log::info!("📍 Using address: {same_address}");
 
-    // Send two transactions to same address
+    // Send multiple transactions to same address
     send_to_address(bitcoind, &same_address, Amount::from_btc(1.0).unwrap());
     generate_blocks(bitcoind, 1);
     send_to_address(bitcoind, &same_address, Amount::from_btc(0.5).unwrap());
+    generate_blocks(bitcoind, 1);
+    send_to_address(bitcoind, &same_address, Amount::from_btc(0.3).unwrap());
+    generate_blocks(bitcoind, 1);
+    send_to_address(bitcoind, &same_address, Amount::from_btc(0.2).unwrap());
     generate_blocks(bitcoind, 1);
 
     // Sync wallet and verify UTXOs
@@ -70,13 +74,9 @@ fn test_address_grouping_behavior() {
         (all_utxos.len(), details)
     };
 
-    assert!(
-        utxo_count >= 2,
-        "Should have at least 2 UTXOs after funding"
-    );
     assert_eq!(
-        utxo_count, 2,
-        "Should have exactly 2 UTXOs from our transactions"
+        utxo_count, 4,
+        "Should have exactly 4 UTXOs from our transactions"
     );
 
     // Test coin selection with small amount
@@ -143,17 +143,17 @@ fn test_address_grouping_behavior() {
 
     // Verify the critical address grouping behavior
     assert!(
-        selected_utxo_count >= 2,
-        "Address grouping should select multiple UTXOs (selected: {})",
+        selected_utxo_count >= 4,
+        "Address grouping should select all UTXOs (selected: {})",
         selected_utxo_count
     );
 
-    if selected_utxo_count >= 2 {
+    if selected_utxo_count >= 4 {
         log::info!(
             "✅ SUCCESS: Address grouping working - {selected_utxo_count} UTXOs selected together",
         );
     } else {
-        log::info!("ℹ️ Only {selected_utxo_count} UTXO selected");
+        log::info!("ℹ️ Only {selected_utxo_count} UTXOs selected");
     }
 
     // Test with larger amount
