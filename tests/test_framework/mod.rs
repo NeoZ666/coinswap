@@ -142,11 +142,15 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path) -> BitcoinD {
         .join("bin");
 
     if !bitcoin_exe_home.exists() {
+        log::info!("bitcoind executable not found, downloading pre-compiled binary from Bitcoin Core releases");
         let tarball_bytes = match env::var("BITCOIND_TARBALL_FILE") {
             Ok(path) => read_tarball_from_file(&path),
             Err(_) => {
-                let download_endpoint = env::var("BITCOIND_DOWNLOAD_ENDPOINT")
-                    .unwrap_or_else(|_| "http://172.81.178.3/bitcoin-binaries".to_owned());
+                let download_endpoint =
+                    env::var("BITCOIND_DOWNLOAD_ENDPOINT").unwrap_or_else(|_| {
+                        format!("https://bitcoincore.org/bin/bitcoin-core-{BITCOIN_VERSION}")
+                            .to_owned()
+                    });
                 let url = format!("{download_endpoint}/{download_filename}");
                 download_bitcoind_tarball(&url, 5)
             }
