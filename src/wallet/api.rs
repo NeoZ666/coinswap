@@ -1362,9 +1362,14 @@ impl Wallet {
                     .sum();
 
                 // Inline fee calculation (3 lines)
-                let tx_weight =
-                    TX_BASE_WEIGHT + result_weight + group_weight + target_weight.to_wu();
-                let estimated_fee = calculate_fee(tx_weight / 4, feerate as f32)?;
+                let tx_weight = TX_BASE_WEIGHT
+                    + result_weight
+                    + group_weight
+                    + MAX_SPLITS as u64 * (target_weight.to_wu() + change_weight.to_wu());
+                log::info!("TX_WEIGHT: {tx_weight}");
+                log::info!("Feerate: {feerate}");
+                let estimated_fee = (tx_weight / 4) * MIN_FEE_RATE as u64;
+                log::info!("Estimated FEE : {estimated_fee}");
 
                 result_total += group_total;
                 result_weight += group_weight;

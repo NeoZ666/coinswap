@@ -130,7 +130,7 @@ impl Wallet {
         normie_flag: bool,
         coinswap_amount: Amount,
         destinations: Vec<Address>,
-        fee_rate: Amount,
+        fee_rate: f64,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         // Unlock all unspent UTXOs
         self.rpc.unlock_unspent_all()?;
@@ -145,7 +145,7 @@ impl Wallet {
 
         // Here, we are gonna use a closure to ensure proper cleanup on error (since we need a rollback)
         let result = (|| {
-            let selected_utxo = self.coin_select(coinswap_amount, fee_rate.to_btc())?;
+            let selected_utxo = self.coin_select(coinswap_amount, fee_rate)?;
 
             let outpoints: Vec<OutPoint> = selected_utxo
                 .iter()
@@ -175,15 +175,14 @@ impl Wallet {
             };
 
             // Creates and Signs Transactions via the spend_coins API
-            let funding_tx =
-                self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
+            let funding_tx = self.spend_coins(&coins_to_spend, destination, fee_rate)?;
 
             // Record this transaction in our results.
             let payment_pos = 0; // assuming the payment output position is 0
 
             funding_txes.push(funding_tx);
             payment_output_positions.push(payment_pos as u32);
-            total_miner_fee += fee_rate.to_sat();
+            total_miner_fee += fee_rate as u64;
 
             Ok(CreateFundingTxesResult {
                 funding_txes,
