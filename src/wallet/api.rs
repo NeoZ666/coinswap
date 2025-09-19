@@ -733,12 +733,26 @@ impl Wallet {
         Ok(None)
     }
 
-    /// Returns a list of all UTXOs tracked by the wallet. Including fidelity, live_contracts and swap coins.
+     /// Returns a list of all UTXOs tracked by the wallet. Including fidelity, live_contracts and swap coins.
     pub fn get_all_utxo(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
-        self.rpc.unlock_unspent_all()?;
-        let all_utxos = self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?;
+        self.rpc.unlock_unspent_all().or_else(|e| {
+            if e.to_string().contains("currently rescanning") {
+                thread::sleep(Duration::from_millis(500));
+                self.rpc.unlock_unspent_all()
+            } else {
+                Err(e)
+            }
+        })?;
+        
+        let all_utxos = self.rpc.list_unspent(Some(0), Some(9999999), None, None, None).or_else(|e| {
+            if e.to_string().contains("currently rescanning") {
+                thread::sleep(Duration::from_millis(500));
+                self.rpc.list_unspent(Some(0), Some(9999999), None, None, None)
+            } else {
+                Err(e)
+            }
+        })?;
+        
         Ok(all_utxos)
     }
 

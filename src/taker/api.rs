@@ -329,7 +329,14 @@ impl Taker {
     /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
     pub(crate) fn send_coinswap(&mut self, swap_params: SwapParams) -> Result<(), TakerError> {
         let swap_start_time = std::time::Instant::now();
-        let initial_utxoset = self.wallet.get_all_utxo()?;
+        
+        // Get wallet data directory for thread identification
+        let wallet_data_dir = &self.data_dir;
+        println!("Thread-specific data directory: {wallet_data_dir:?}");
+        
+        let initial_utxoset = self.get_wallet().get_all_utxo()?;
+        let wallet_state = self.get_wallet();
+        println!("Wallet State from {wallet_data_dir:?}: {wallet_state:?}");
         self.ongoing_swap_state.swap_params = swap_params;
 
         // Check if we have enough balance - try regular first, then swap
@@ -536,6 +543,7 @@ impl Taker {
         start_time: std::time::Instant,
         initial_utxos: Vec<ListUnspentResultEntry>,
     ) -> Result<(), TakerError> {
+
         let swap_state = &prereset_swapstate;
 
         let mut target_amount = swap_state.swap_params.send_amount.to_sat();
@@ -547,6 +555,11 @@ impl Taker {
             .into_iter()
             .map(|(utxo, _)| utxo)
             .collect::<Vec<_>>();
+
+
+        println!("intial_utxos: {:?} and final regular utxos: {:?}", 
+            initial_utxos.iter().map(|utxo| utxo.amount).collect::<Vec<_>>(), all_regular_utxo.iter().map(|utxo| utxo.amount).collect::<Vec<_>>()
+        );
 
         let initial_outpoints = initial_utxos
             .iter()
