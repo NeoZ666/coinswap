@@ -19,7 +19,7 @@ use super::{config::TakerConfig, error::TakerError, routines::download_maker_off
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
-    pub(crate) offer: Offer,
+    pub offer: Offer,
     pub address: MakerAddress,
     pub timestamp: DateTime<Utc>,
 }

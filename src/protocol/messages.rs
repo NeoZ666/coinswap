@@ -236,23 +236,23 @@ pub(crate) struct MakerHello {
 /// Contains proof data related to fidelity bond.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FidelityProof {
-    pub(crate) bond: FidelityBond,
+    pub bond: FidelityBond,
     pub(crate) cert_hash: Hash,
     pub(crate) cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 /// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub(crate) struct Offer {
-    pub(crate) base_fee: u64,                // base fee in sats
-    pub(crate) amount_relative_fee_pct: f64, // % fee on total amount
-    pub(crate) time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
-    pub(crate) required_confirms: u32,
-    pub(crate) minimum_locktime: u16,
-    pub(crate) max_size: u64,
-    pub(crate) min_size: u64,
-    pub(crate) tweakable_point: PublicKey,
-    pub(crate) fidelity: FidelityProof,
+pub struct Offer {
+    pub base_fee: u64,                // base fee in sats
+    pub amount_relative_fee_pct: f64, // % fee on total amount
+    pub time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
+    pub required_confirms: u32,
+    pub minimum_locktime: u16,
+    pub max_size: u64,
+    pub min_size: u64,
+    pub tweakable_point: PublicKey,
+    pub fidelity: FidelityProof,
 }
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.

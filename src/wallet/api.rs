@@ -27,7 +27,9 @@ use bitcoin::{
     sighash::{EcdsaSighashType, SighashCache},
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, Txid, Weight,
 };
-use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::{
+    bitcoincore_rpc_json::ListUnspentResultEntry, json::ListTransactionResult, Client, RpcApi,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -978,6 +980,14 @@ impl Wallet {
             .into_iter()
             .map(|addrs| addrs.assume_checked())
             .collect())
+    }
+
+    pub fn get_transactions(
+        &self,
+        count: Option<usize>,
+        skip: Option<usize>,
+    ) -> Result<Vec<ListTransactionResult>, WalletError> {
+        Ok(self.rpc.list_transactions(None, count, skip, Some(true))?)
     }
 
     /// Refreshes the offer maximum size cache based on the current wallet's unspent transaction outputs (UTXOs).
@@ -2052,5 +2062,35 @@ impl Wallet {
             log::info!("Wallet sync and save complete.");
         }
         Ok(broadcasted)
+    }
+
+    pub fn send_to_address(&mut self, amount: u64, address: String) -> Result<Txid, WalletError> {
+        let destination_address = Address::from_str(&address)
+            .map_err(|e| {
+                WalletError::General(format!("Failed to parse address '{}': {}", address, e))
+            })?
+            .require_network(self.store.network)
+            .map_err(|e| {
+                WalletError::General(format!(
+                    "Address '{}' is not valid for network '{}': {}",
+                    address, self.store.network, e
+                ))
+            })?;
+
+        let txid = self.rpc.send_to_address(
+            &destination_address,
+            Amount::from_sat(amount),
+            None,
+            None,
+            Some(false),
+            Some(true),
+            None,
+            None,
+        )?;
+
+        self.sync_no_fail();
+        self.save_to_disk()?;
+
+        Ok(txid)
     }
 }
