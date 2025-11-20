@@ -236,6 +236,7 @@ pub(crate) struct MakerHello {
 /// Contains proof data related to fidelity bond.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FidelityProof {
+    /// Details for Fidelity Bond
     pub bond: FidelityBond,
     pub(crate) cert_hash: Hash,
     pub(crate) cert_sig: bitcoin::secp256k1::ecdsa::Signature,
@@ -244,14 +245,23 @@ pub struct FidelityProof {
 /// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Offer {
-    pub base_fee: u64,                // base fee in sats
+    /// Base fee charged per swap in satoshis (fixed cost component)
+    pub base_fee: u64, // base fee in sats
+    /// Percentage fee relative to swap amount (e.g., 0.01 = 1%)
     pub amount_relative_fee_pct: f64, // % fee on total amount
+    /// Percentage fee for time-locked funds
     pub time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.
+    /// Minimum confirmations required before proceeding with swap
     pub required_confirms: u32,
+    /// Minimum timelock duration in blocks for contract transactions
     pub minimum_locktime: u16,
+    /// Maximum swap amount accepted in sats
     pub max_size: u64,
+    /// Minimum swap amount accepted in sats
     pub min_size: u64,
+    /// Public key for Tor onion address generation and authentication
     pub tweakable_point: PublicKey,
+    /// Cryptographic proof of fidelity bond for Sybil resistance
     pub fidelity: FidelityProof,
 }
 

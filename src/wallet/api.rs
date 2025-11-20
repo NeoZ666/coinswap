@@ -140,32 +140,56 @@ const WATCH_ONLY_SWAPCOIN_LABEL: &str = "watchonly_swapcoin_label";
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum UTXOSpendInfo {
     /// Seed Coin
-    SeedCoin { path: String, input_value: Amount },
-    /// Coins that we have received in a swap
-    IncomingSwapCoin { multisig_redeemscript: ScriptBuf },
-    /// Coins that we have sent in a swap
-    OutgoingSwapCoin { multisig_redeemscript: ScriptBuf },
-    /// Timelock Contract
-    TimelockContract {
-        swapcoin_multisig_redeemscript: ScriptBuf,
-        input_value: Amount,
-    },
-    /// HashLockContract
-    HashlockContract {
-        swapcoin_multisig_redeemscript: ScriptBuf,
-        input_value: Amount,
-    },
-    /// Fidelity Bond Coin
-    FidelityBondCoin { index: u32, input_value: Amount },
-    ///Swept incoming swap coin
-    SweptCoin {
+    SeedCoin {
+        /// HD derivation path for the private key
         path: String,
+        /// UTXO value in satoshis
         input_value: Amount,
+    },
+    /// Coins that we have received in a swap
+    IncomingSwapCoin {
+        /// Multisig redeem script for spending (2-OF-2 MSIG)
+        multisig_redeemscript: ScriptBuf,
+    },
+    /// Coins that we have sent in a swap
+    OutgoingSwapCoin {
+        /// Multisig redeem script for spending (2-OF-2 MSIG)
+        multisig_redeemscript: ScriptBuf,
+    },
+    /// Timelock contract UTXO (can be claimed after locktime expiry)
+    TimelockContract {
+        /// Original swap multisig redeem script
+        swapcoin_multisig_redeemscript: ScriptBuf,
+        /// UTXO value in satoshis
+        input_value: Amount,
+    },
+    /// Hashlock contract UTXO (requires hash preimage to spend)
+    HashlockContract {
+        /// Original swap multisig redeem script
+        swapcoin_multisig_redeemscript: ScriptBuf,
+        /// UTXO value in satoshis
+        input_value: Amount,
+    },
+    /// Fidelity Bond Coin (time-locked)
+    FidelityBondCoin {
+        /// Bond index in wallet's fidelity bond list
+        index: u32,
+        /// UTXO value in satoshis
+        input_value: Amount,
+    },
+    /// Swept incoming swap coin (recovered to regular wallet address at the end of the Swap)
+    SweptCoin {
+        /// HD derivation path for the swept address
+        path: String,
+        /// UTXO value in satoshis
+        input_value: Amount,
+        /// Original multisig script before sweeping
         original_multisig_redeemscript: ScriptBuf,
     },
 }
 
 impl UTXOSpendInfo {
+    /// Estimates Witness Size for different types of UTXOs in the context of Coinswap
     pub fn estimate_witness_size(&self) -> usize {
         const P2PWPKH_WITNESS_SIZE: usize = 107;
         const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
@@ -982,6 +1006,7 @@ impl Wallet {
             .collect())
     }
 
+    /// Returns a list of recent Incoming Transactions (bydefault last 10)
     pub fn get_transactions(
         &self,
         count: Option<usize>,
@@ -2064,6 +2089,7 @@ impl Wallet {
         Ok(broadcasted)
     }
 
+    /// Sends specified Amount of Satoshis to an External Address
     pub fn send_to_address(&mut self, amount: u64, address: String) -> Result<Txid, WalletError> {
         let destination_address = Address::from_str(&address)
             .map_err(|e| {
