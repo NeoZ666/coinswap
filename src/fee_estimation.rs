@@ -112,7 +112,7 @@ impl FeeEstimator {
         Ok(final_fees)
     }
 
-    fn fetch_mempool_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
+    pub fn fetch_mempool_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
         let response = minreq::get(MEMPOOL_FEES_API_URL)
             .send()?
             .json::<MempoolFeeResponse>()?;
