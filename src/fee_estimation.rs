@@ -157,7 +157,7 @@ impl FeeEstimator {
         Ok(fees)
     }
 
-    fn fetch_esplora_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
+    pub fn fetch_esplora_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
         let response = minreq::get(ESPLORA_FEES_API_URL)
             .send()?
             .json::<EsploraFeeResponse>()?
