@@ -157,9 +157,13 @@ pub struct SwapReport {
     /// Input UTXOs amounts
     pub input_utxos: Vec<u64>,
     /// Output regular UTXOs amounts
-    pub output_regular_utxos: Vec<u64>,
+    pub output_regular_amounts: Vec<u64>,
     /// Output swap coin UTXOs amounts
-    pub output_swap_utxos: Vec<u64>,
+    pub output_swap_amounts: Vec<u64>,
+    /// Output regular coin UTXOs with amounts and addresses (amount, address)
+    pub output_regular_utxos_with_addrs: Vec<(u64, String)>,
+    /// Output swap coin UTXOs with amounts and addresses (amount, address)
+    pub output_swap_utxos_with_addrs: Vec<(u64, String)>,
 }
 
 /// The Swap State defining a current ongoing swap. This structure is managed by the Taker while
@@ -605,7 +609,7 @@ impl Taker {
 
                 // Generate post-swap report
                 self.wallet.sync_and_save()?;
-                let swap_report = Some(self.print_swap_report(
+                let swap_report = Some(self.generate_swap_report(
                     prereset_swapstate,
                     swap_start_time,
                     initial_utxoset,
@@ -622,7 +626,7 @@ impl Taker {
         }
     }
 
-    fn print_swap_report(
+    fn generate_swap_report(
         &self,
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
@@ -669,7 +673,6 @@ impl Taker {
             .map(|utxo| utxo.amount.to_sat())
             .collect::<Vec<u64>>();
 
-        // Present in current set but not in initial regular set (created)
         let output_regular_utxos = all_regular_utxo
             .iter()
             .filter(|utxo| {
@@ -679,17 +682,50 @@ impl Taker {
                 };
                 !initial_outpoints.contains(&final_outpoint)
             })
+            .collect::<Vec<_>>();
+
+        // Present in current set but not in initial regular set (created)
+        let output_regular_amounts = output_regular_utxos
+            .iter()
             .map(|utxo| utxo.amount.to_sat())
             .collect::<Vec<u64>>();
 
-        let output_swap_utxos = self
+        let network = self.wallet.store.network;
+
+        let output_swap_utxos_with_addrs = self
             .wallet
             .list_swept_incoming_swap_utxos()
             .into_iter()
-            .map(|(utxo, _)| utxo.amount.to_sat())
+            .map(|(utxo, _)| {
+                let address = utxo
+                    .address
+                    .as_ref()
+                    .and_then(|addr| addr.clone().require_network(network).ok())
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (utxo.amount.to_sat(), address)
+            })
+            .collect::<Vec<(u64, String)>>();
+
+        let output_swap_amounts = output_swap_utxos_with_addrs
+            .iter()
+            .map(|(amount, _)| *amount)
             .collect::<Vec<u64>>();
 
-        let output_utxos = [output_regular_utxos.clone(), output_swap_utxos.clone()].concat();
+        let output_regular_utxos_with_addrs = output_regular_utxos
+            .iter()
+            .map(|utxo| {
+                let address = utxo
+                    .address
+                    .as_ref()
+                    .and_then(|addr| addr.clone().require_network(network).ok())
+                    .map(|addr| addr.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (utxo.amount.to_sat(), address)
+            })
+            .collect::<Vec<(u64, String)>>();
+
+        let output_utxos = [output_regular_amounts.clone(), output_swap_amounts.clone()].concat();
 
         let total_input_amount = input_utxos.iter().sum::<u64>();
         let total_output_amount = output_utxos.iter().sum::<u64>();
@@ -816,8 +852,10 @@ impl Taker {
         println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
         println!("\x1b[1;37mInput UTXOs:\x1b[0m {input_utxos:?}");
         println!("\x1b[1;37mOutput UTXOs:\x1b[0m");
-        println!("  Seed / Regular : {output_regular_utxos:?}");
-        println!("  Swap Coins     : {output_swap_utxos:?}");
+        println!("  Seed / Regular : {output_regular_amounts:?}");
+        println!("  Seed / Regular Addrs : {output_regular_utxos_with_addrs:?}");
+        println!("  Swap Coins     : {output_swap_amounts:?}");
+        println!("  Swap Coins Addrs     : {output_swap_utxos_with_addrs:?}");
 
         println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
         println!("                                END REPORT");
@@ -858,8 +896,10 @@ impl Taker {
             fee_percentage,
             maker_fee_info,
             input_utxos,
-            output_regular_utxos,
-            output_swap_utxos,
+            output_regular_amounts,
+            output_swap_amounts,
+            output_swap_utxos_with_addrs,
+            output_regular_utxos_with_addrs,
         };
 
         Ok(report)

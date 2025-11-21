@@ -2090,32 +2090,36 @@ impl Wallet {
     }
 
     /// Sends specified Amount of Satoshis to an External Address
-    pub fn send_to_address(&mut self, amount: u64, address: String) -> Result<Txid, WalletError> {
-        let destination_address = Address::from_str(&address)
-            .map_err(|e| {
-                WalletError::General(format!("Failed to parse address '{}': {}", address, e))
-            })?
-            .require_network(self.store.network)
-            .map_err(|e| {
-                WalletError::General(format!(
-                    "Address '{}' is not valid for network '{}': {}",
-                    address, self.store.network, e
-                ))
-            })?;
+    pub fn send_to_address(
+        &mut self,
+        amount: u64,
+        address: String,
+        fee_rate: Option<f64>,
+    ) -> Result<Txid, WalletError> {
+        let amount = Amount::from_sat(amount);
 
-        let txid = self.rpc.send_to_address(
-            &destination_address,
-            Amount::from_sat(amount),
-            None,
-            None,
-            Some(false),
-            Some(true),
-            None,
-            None,
+        let coins_to_spend = self.coin_select(amount, fee_rate.unwrap_or(MIN_FEE_RATE), None)?;
+
+        let addr = Address::from_str(&address)
+            .map_err(|e| WalletError::General(format!("Invalid address: {}", e)))?
+            .assume_checked();
+        let outputs = vec![(addr, amount)];
+        let destination = Destination::Multi {
+            outputs,
+            op_return_data: None,
+        };
+
+        let tx = self.spend_from_wallet(
+            fee_rate.unwrap_or(MIN_FEE_RATE),
+            destination,
+            &coins_to_spend,
         )?;
 
+        let txid = self.send_tx(&tx).unwrap();
+
+        println!("Send to Address TxId: {txid}");
+
         self.sync_no_fail();
-        self.save_to_disk()?;
 
         Ok(txid)
     }
