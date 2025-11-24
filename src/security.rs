@@ -352,15 +352,6 @@ pub fn load_sensitive_struct_interactive<T: DeserializeOwned, F: SerdeFormat>(
 ///
 /// - `T`: The struct type to load (e.g., [`WalletBackup`]).
 /// - `F`: A type implementing [`SerdeFormat`].
-///
-/// # Returns
-///
-/// A tuple containing:
-/// - The deserialized struct of type `T`
-/// - `Some(KeyMaterial)` if the data was encrypted, or `None` if plaintext
-///
-/// The returned [`KeyMaterial`] preserves the encryption nonce and salt, enabling
-/// re-encryption of the struct with the same cryptographic parameters.
 pub fn load_sensitive_struct_from_value<T: DeserializeOwned, F: SerdeFormat>(
     value: &serde_json::Value,
     password: String,

@@ -344,19 +344,13 @@ impl Taker {
     /// 2. If encrypted, decrypts using the provided password and preserves encryption material
     /// 3. Constructs the wallet path: `{data_dir_or_default}/wallets/{wallet_file_name_or_default}`
     /// 4. Calls [`Wallet::restore`] to reconstruct the wallet with all UTXOs and metadata
-    /// 5. Logs success or failure (does not panic on errors)
     ///
     /// # Parameters
     ///
     /// - `data_dir`: Target directory, defaults to `~/.coinswap/taker`
     /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
-    /// - `rpc_config`: Bitcoin RPC configuration (required)
     /// - `backup_file`: JSON string containing the wallet backup (encrypted or plain)
     /// - `password`: Required if backup is encrypted, ignored otherwise
-    ///
-    /// # Panics
-    ///
-    /// Panics if the JSON string is malformed or password is incorrect for encrypted backups.
     pub fn restore_wallet_gui_app(
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
