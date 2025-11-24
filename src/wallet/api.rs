@@ -2095,10 +2095,15 @@ impl Wallet {
         amount: u64,
         address: String,
         fee_rate: Option<f64>,
+        manually_selected_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Txid, WalletError> {
         let amount = Amount::from_sat(amount);
 
-        let coins_to_spend = self.coin_select(amount, fee_rate.unwrap_or(MIN_FEE_RATE), None)?;
+        let coins_to_spend = self.coin_select(
+            amount,
+            fee_rate.unwrap_or(MIN_FEE_RATE),
+            manually_selected_outpoints,
+        )?;
 
         let addr = Address::from_str(&address)
             .map_err(|e| WalletError::General(format!("Invalid address: {}", e)))?
@@ -2116,10 +2121,8 @@ impl Wallet {
         )?;
 
         let txid = self.send_tx(&tx).unwrap();
-
-        println!("Send to Address TxId: {txid}");
-
         self.sync_no_fail();
+        println!("Send to Address TxId: {txid}");
 
         Ok(txid)
     }

@@ -238,8 +238,10 @@ pub(crate) struct MakerHello {
 pub struct FidelityProof {
     /// Details for Fidelity Bond
     pub bond: FidelityBond,
-    pub(crate) cert_hash: Hash,
-    pub(crate) cert_sig: bitcoin::secp256k1::ecdsa::Signature,
+    /// Double SHA256 hash of certificate message proving bond ownership and binding to maker address
+    pub cert_hash: Hash,
+    /// ECDSA signature over cert_hash using the bond's private key
+    pub cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 /// Represents an offer in the context of the Coinswap protocol.
@@ -247,7 +249,7 @@ pub struct FidelityProof {
 pub struct Offer {
     /// Base fee charged per swap in satoshis (fixed cost component)
     pub base_fee: u64, // base fee in sats
-    /// Percentage fee relative to swap amount (e.g., 0.01 = 1%)
+    /// Percentage fee relative to swap amount
     pub amount_relative_fee_pct: f64, // % fee on total amount
     /// Percentage fee for time-locked funds
     pub time_relative_fee_pct: f64, // amount * refund_locktime * TRF% = fees for locking the fund.

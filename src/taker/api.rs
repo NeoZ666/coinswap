@@ -48,10 +48,15 @@ use crate::{
             TakerToMakerMessage,
         },
     },
-    taker::{config::TakerConfig, offers::OfferBook},
+    security::{load_sensitive_struct_from_value, SerdeJson},
+    taker::{
+        config::TakerConfig,
+        ffi::{MakerFeeInfo, SwapReport},
+        offers::OfferBook,
+    },
     utill::*,
     wallet::{
-        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletError,
+        IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, Wallet, WalletBackup, WalletError,
         WatchOnlySwapCoin,
     },
     watch_tower::{
@@ -104,66 +109,6 @@ enum TakerPosition {
     WatchOnly,
     /// Taker is the last peer of the swap (Receiver Side)
     LastPeer,
-}
-
-/// Information about individual maker fees in a swap
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MakerFeeInfo {
-    /// Index of maker(starts with zero)
-    pub maker_index: usize,
-    /// Maker Addresses (Onion:Port)
-    pub maker_address: String,
-    /// The fixed Base Fee for each maker
-    pub base_fee: f64,
-    /// Dynamic Amount Fee for each maker
-    pub amount_relative_fee: f64,
-    /// Dynamic Time Fee(Decreases for subsequent makers) for each maker
-    pub time_relative_fee: f64,
-    /// All inclusive fee for each maker
-    pub total_fee: f64,
-}
-
-/// Complete swap report containing all swap information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwapReport {
-    /// Unique swap ID
-    pub swap_id: String,
-    /// Duration of the swap in seconds
-    pub swap_duration_seconds: f64,
-    /// Target amount for the swap
-    pub target_amount: u64,
-    /// Total input amount
-    pub total_input_amount: u64,
-    /// Total output amount
-    pub total_output_amount: u64,
-    /// Number of makers involved
-    pub makers_count: usize,
-    /// List of maker addresses used
-    pub maker_addresses: Vec<String>,
-    /// Total number of funding transactions
-    pub total_funding_txs: usize,
-    /// Funding transaction IDs organized by hops
-    pub funding_txids_by_hop: Vec<Vec<String>>,
-    /// Total fees paid
-    pub total_fee: u64,
-    /// Total maker fees
-    pub total_maker_fees: u64,
-    /// Mining fees
-    pub mining_fee: u64,
-    /// Fee percentage relative to target amount
-    pub fee_percentage: f64,
-    /// Individual maker fee information
-    pub maker_fee_info: Vec<MakerFeeInfo>,
-    /// Input UTXOs amounts
-    pub input_utxos: Vec<u64>,
-    /// Output regular UTXOs amounts
-    pub output_regular_amounts: Vec<u64>,
-    /// Output swap coin UTXOs amounts
-    pub output_swap_amounts: Vec<u64>,
-    /// Output regular coin UTXOs with amounts and addresses (amount, address)
-    pub output_regular_utxos_with_addrs: Vec<(u64, String)>,
-    /// Output swap coin UTXOs with amounts and addresses (amount, address)
-    pub output_swap_utxos_with_addrs: Vec<(u64, String)>,
 }
 
 /// The Swap State defining a current ongoing swap. This structure is managed by the Taker while
@@ -385,6 +330,61 @@ impl Taker {
             &rpc_config.unwrap_or_default(),
             &restored_wallet_path,
         );
+    }
+
+    /// Restores a wallet from an encrypted or unencrypted JSON backup string for GUI/FFI applications.
+    ///
+    /// This is a non-interactive restore method designed for programmatic use via FFI bindings.
+    /// Unlike [`restore_wallet`], this function accepts a JSON string directly and handles both
+    /// encrypted and unencrypted backups using [`load_sensitive_struct_from_value`].
+    ///
+    /// # Behavior
+    ///
+    /// 1. Parses the JSON backup string into a [`WalletBackup`] structure
+    /// 2. If encrypted, decrypts using the provided password and preserves encryption material
+    /// 3. Constructs the wallet path: `{data_dir_or_default}/wallets/{wallet_file_name_or_default}`
+    /// 4. Calls [`Wallet::restore`] to reconstruct the wallet with all UTXOs and metadata
+    /// 5. Logs success or failure (does not panic on errors)
+    ///
+    /// # Parameters
+    ///
+    /// - `data_dir`: Target directory, defaults to `~/.coinswap/taker`
+    /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
+    /// - `rpc_config`: Bitcoin RPC configuration (required)
+    /// - `backup_file`: JSON string containing the wallet backup (encrypted or plain)
+    /// - `password`: Required if backup is encrypted, ignored otherwise
+    ///
+    /// # Panics
+    ///
+    /// Panics if the JSON string is malformed or password is incorrect for encrypted backups.
+    pub fn restore_wallet_gui_app(
+        data_dir: Option<PathBuf>,
+        wallet_file_name: Option<String>,
+        rpc_config: RPCConfig,
+        backup_file: String,
+        password: Option<String>,
+    ) {
+        let value = serde_json::from_str(&backup_file).unwrap();
+        let (backup, encryption_material) =
+            load_sensitive_struct_from_value::<WalletBackup, SerdeJson>(&value, password.unwrap());
+        let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
+
+        let restored_wallet_path = data_dir
+            .clone()
+            .unwrap_or(get_taker_dir())
+            .join("wallets")
+            .join(restored_wallet_filename);
+
+        if let Err(e) = Wallet::restore(
+            &backup,
+            &restored_wallet_path,
+            &rpc_config,
+            encryption_material,
+        ) {
+            log::error!("Wallet restore failed: {e:?}");
+        } else {
+            println!("Wallet restore succeeded!");
+        }
     }
 
     /// Get wallet
@@ -692,7 +692,7 @@ impl Taker {
 
         let network = self.wallet.store.network;
 
-        let output_swap_utxos_with_addrs = self
+        let output_swap_utxos = self
             .wallet
             .list_swept_incoming_swap_utxos()
             .into_iter()
@@ -707,12 +707,12 @@ impl Taker {
             })
             .collect::<Vec<(u64, String)>>();
 
-        let output_swap_amounts = output_swap_utxos_with_addrs
+        let output_swap_amounts = output_swap_utxos
             .iter()
             .map(|(amount, _)| *amount)
             .collect::<Vec<u64>>();
 
-        let output_regular_utxos_with_addrs = output_regular_utxos
+        let output_change_utxos = output_regular_utxos
             .iter()
             .map(|utxo| {
                 let address = utxo
@@ -852,10 +852,8 @@ impl Taker {
         println!("────────────────────────────────────────────────────────────────────────────────\x1b[0m");
         println!("\x1b[1;37mInput UTXOs:\x1b[0m {input_utxos:?}");
         println!("\x1b[1;37mOutput UTXOs:\x1b[0m");
-        println!("  Seed / Regular : {output_regular_amounts:?}");
-        println!("  Seed / Regular Addrs : {output_regular_utxos_with_addrs:?}");
-        println!("  Swap Coins     : {output_swap_amounts:?}");
-        println!("  Swap Coins Addrs     : {output_swap_utxos_with_addrs:?}");
+        println!("  Seed / Regular : {output_change_utxos:?}");
+        println!("  Swap Coins     : {output_swap_utxos:?}");
 
         println!("\n\x1b[1;36m════════════════════════════════════════════════════════════════════════════════");
         println!("                                END REPORT");
@@ -898,8 +896,8 @@ impl Taker {
             input_utxos,
             output_regular_amounts,
             output_swap_amounts,
-            output_swap_utxos_with_addrs,
-            output_regular_utxos_with_addrs,
+            output_swap_utxos,
+            output_change_utxos,
         };
 
         Ok(report)
@@ -1014,7 +1012,6 @@ impl Taker {
                 self.ongoing_swap_state.funding_txs.push(stuffs);
             }
             Err(e) => {
-                log::error!("Error: {e:?}");
                 if let TakerError::ContractsBroadcasted(_) = e {
                     self.offerbook.add_bad_maker(&maker);
                 }
