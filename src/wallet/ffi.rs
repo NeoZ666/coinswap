@@ -171,6 +171,23 @@ impl Wallet {
         Ok(())
     }
 
+    /// Checks whether wallet is encrypted or not.
+    pub fn is_wallet_encrypted(wallet_path: &Path) -> Result<bool, WalletError> {
+        if !wallet_path.exists() {
+            return Ok(false); // No wallet = not encrypted
+        }
+
+        let content = std::fs::read(wallet_path).map_err(WalletError::IO)?;
+
+        // Try to deserialize as EncryptedData using CBOR
+        // If it succeeds, the wallet is encrypted
+        // If it fails, the wallet is plaintext
+        match serde_cbor::from_slice::<crate::security::EncryptedData>(&content) {
+            Ok(_) => Ok(true),   // Successfully parsed as EncryptedData = encrypted
+            Err(_) => Ok(false), // Failed to parse as EncryptedData = plaintext
+        }
+    }
+
     /// Returns a list of recent Incoming Transactions (bydefault last 10)
     pub fn get_transactions(
         &self,
