@@ -28,7 +28,7 @@ fn format_unix_timestamp_utc(secs: u64, millis: u32) -> String {
     let second = sod % 60;
 
     format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        "{:04}-{:02}-{:02}T{:02}-{:02}-{:02}.{:03}Z",
         year, m, d, hour, minute, second, millis
     )
 }
