@@ -45,8 +45,6 @@ The app **never** calls Rust directly. All interaction goes through the UniFFI-g
 
 From `ffi-commons/src/taker.rs` and `ffi-commons/src/taproot_taker.rs`, the current UniFFI exports:
 
-### 3.1 Taker (Legacy V1)
-
 ```kotlin
 // Constructor
 Taker.init(dataDir, walletFileName, rpcConfig, controlPort, torAuthPassword, zmqAddr, password): Taker
@@ -73,11 +71,7 @@ taker.recoverFromSwap()
 taker.setupLogging(dataDir, logLevel)
 ```
 
-### 3.2 TaprootTaker (V2)
-
-Same API surface with `TaprootSwapParams` adding `txCount` and `requiredConfirms`.
-
-### 3.3 Standalone Functions
+### 3.1 Standalone Functions
 
 ```kotlin
 fetchMempoolFees(): FeeRates
@@ -226,19 +220,6 @@ app/
 ├── build.gradle.kts
 └── proguard-rules.pro
 ```
-
-### 5.2 Tech Stack
-
-| Layer | Technology |
-|---|---|
-| UI | Jetpack Compose (Material 3) |
-| Navigation | Compose Navigation |
-| DI | Hilt |
-| Async | Kotlin Coroutines + Flow |
-| Background Work | WorkManager (sync), Foreground Service (swap) |
-| Tor | Arti-mobile or Orbot integration |
-| Storage | Shared Preferences (app config) + Rust-managed CBOR (wallet) |
-| Arch | MVVM + Use Cases |
 
 ---
 
