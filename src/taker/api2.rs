@@ -1961,8 +1961,8 @@ impl Taker {
     }
 
     /// Trigger a manual offerbook sync and block until it completes.
-    pub fn sync_offerbook_and_wait(&self) {
-        self.offer_sync_handle.sync_and_wait();
+    pub fn sync_offerbook_and_wait(&self) -> Result<(), TakerError> {
+        self.offer_sync_handle.sync_and_wait()
     }
 }
 

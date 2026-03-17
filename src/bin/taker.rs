@@ -356,7 +356,7 @@ fn main() -> Result<(), TakerError> {
                     println!("Waiting for offerbook synchronization to complete…");
                     let sync_start = Instant::now();
 
-                    taker.sync_offerbook_and_wait();
+                    taker.sync_offerbook_and_wait()?;
 
                     println!("Offerbook synchronized in {:.2?}", sync_start.elapsed());
 

@@ -764,7 +764,7 @@ impl Taker {
                     total_fee: total_maker_fee,
                 });
 
-                temp_target_amount -= total_maker_fee as u64;
+                temp_target_amount = temp_target_amount.saturating_sub(total_maker_fee as u64);
                 total_maker_fee as u64
             })
             .sum();
@@ -2426,8 +2426,8 @@ impl Taker {
     }
 
     /// Trigger a manual offerbook sync and block until it completes.
-    pub fn sync_offerbook_and_wait(&self) {
-        self.offer_sync_handle.sync_and_wait();
+    pub fn sync_offerbook_and_wait(&self) -> Result<(), TakerError> {
+        self.offer_sync_handle.sync_and_wait()
     }
 }
 

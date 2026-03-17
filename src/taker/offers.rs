@@ -46,7 +46,7 @@ use crate::{
 use super::error::TakerError;
 
 enum SyncCommand {
-    SyncNow(mpsc::Sender<()>),
+    SyncNow(mpsc::Sender<Result<(), String>>),
 }
 
 #[cfg(not(feature = "integration-test"))]
@@ -54,6 +54,11 @@ const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 #[cfg(feature = "integration-test")]
 const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Max time to wait for Nostr relays to deliver their initial stored events
+/// (EOSE). If no relay responds in time, the sync service proceeds anyway
+/// with whatever addresses the registry already has.
+const DISCOVERY_WAIT_TIMEOUT: Option<Duration> = Some(Duration::from_secs(60 * 2));
 
 #[cfg(not(feature = "integration-test"))]
 const OFFER_MAX_AGE_BEFORE_REFRESH: Duration = Duration::from_secs(30 * 60);
@@ -352,10 +357,25 @@ impl OfferSyncHandle {
     }
 
     /// Trigger an offerbook sync and block until it completes.
-    pub fn sync_and_wait(&self) {
+    ///
+    /// Returns `Ok(())` on a successful sync cycle, or an error if the sync
+    /// failed or the background service is no longer running.
+    pub fn sync_and_wait(&self) -> Result<(), TakerError> {
         let (done_tx, done_rx) = mpsc::channel();
-        if self.cmd_tx.send(SyncCommand::SyncNow(done_tx)).is_ok() {
-            let _ = done_rx.recv();
+        if self.cmd_tx.send(SyncCommand::SyncNow(done_tx)).is_err() {
+            return Err(TakerError::General(
+                "Offer sync service is not running".into(),
+            ));
+        }
+        // recv() blocks until the background thread runs run_once() and
+        // responds.  Can't hang: the thread checks cmd_rx every 1s, and
+        // if it panics the channel disconnects immediately.
+        match done_rx.recv() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(TakerError::General(e)),
+            Err(_) => Err(TakerError::General(
+                "Offer sync service stopped unexpectedly".into(),
+            )),
         }
     }
 }
@@ -448,31 +468,44 @@ impl OfferSyncService {
                 while !self.initial_discovery_complete.load(Ordering::SeqCst)
                     && !shutdown_flag.load(Ordering::Relaxed)
                 {
+                    if let Some(timeout) = DISCOVERY_WAIT_TIMEOUT {
+                        if discovery_wait_start.elapsed() >= timeout {
+                            log::warn!(
+                                "Nostr discovery did not complete within {:.0}s — proceeding with any addresses already known",
+                                timeout.as_secs_f64()
+                            );
+                            break;
+                        }
+                    }
                     std::thread::sleep(Duration::from_millis(200));
                 }
-                log::info!(
-                    "Initial Nostr discovery completed in {:.1}s",
-                    discovery_wait_start.elapsed().as_secs_f64()
-                );
+                if self.initial_discovery_complete.load(Ordering::SeqCst) {
+                    log::info!(
+                        "Initial Nostr discovery completed in {:.1}s",
+                        discovery_wait_start.elapsed().as_secs_f64()
+                    );
+                }
 
                 while !shutdown_flag.load(Ordering::Relaxed) {
                     log::info!("Running offerbook sync");
-                    if let Err(e) = self.run_once() {
+                    let periodic_result = self.run_once().map_err(|e| {
                         log::warn!("Offer sync iteration failed: {e:?}");
-                    }
+                        format!("{e:?}")
+                    });
                     log::debug!("Running offerbook sync completed");
 
-                    Self::drain_and_ack(&cmd_rx);
+                    Self::drain_and_ack(&cmd_rx, &periodic_result);
                     let mut slept = Duration::ZERO;
                     while slept < OFFER_SYNC_INTERVAL && !shutdown_flag.load(Ordering::Relaxed) {
                         match cmd_rx.try_recv() {
                             Ok(SyncCommand::SyncNow(done_tx)) => {
                                 log::info!("Manual offerbook sync requested");
-                                if let Err(e) = self.run_once() {
+                                let result = self.run_once().map_err(|e| {
                                     log::warn!("Manual offer sync failed: {e:?}");
-                                }
-                                let _ = done_tx.send(());
-                                Self::drain_and_ack(&cmd_rx);
+                                    format!("{e:?}")
+                                });
+                                let _ = done_tx.send(result.clone());
+                                Self::drain_and_ack(&cmd_rx, &result);
                                 break;
                             }
                             Err(mpsc::TryRecvError::Empty) => {}
@@ -494,10 +527,12 @@ impl OfferSyncService {
         }
     }
 
-    /// This is used while periodic sync is running and on-demand syncs are initiated, then, acknowledge and discardall queued sync requests.
-    fn drain_and_ack(rx: &mpsc::Receiver<SyncCommand>) {
+    /// Acknowledge and discard all queued sync requests, forwarding the
+    /// result of the most recent sync cycle so every waiting caller gets
+    /// a meaningful response.
+    fn drain_and_ack(rx: &mpsc::Receiver<SyncCommand>, result: &Result<(), String>) {
         while let Ok(SyncCommand::SyncNow(done_tx)) = rx.try_recv() {
-            let _ = done_tx.send(());
+            let _ = done_tx.send(result.clone());
         }
     }
 
