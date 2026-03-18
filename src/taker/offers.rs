@@ -58,7 +58,7 @@ const OFFER_SYNC_INTERVAL: Duration = Duration::from_secs(10);
 /// Max time to wait for Nostr relays to deliver their initial stored events
 /// (EOSE). If no relay responds in time, the sync service proceeds anyway
 /// with whatever addresses the registry already has.
-const DISCOVERY_WAIT_TIMEOUT: Option<Duration> = Some(Duration::from_secs(60 * 2));
+const DISCOVERY_WAIT_TIMEOUT: Option<Duration> = Some(Duration::from_secs(60 * 10));
 
 #[cfg(not(feature = "integration-test"))]
 const OFFER_MAX_AGE_BEFORE_REFRESH: Duration = Duration::from_secs(30 * 60);
