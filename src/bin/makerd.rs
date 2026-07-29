@@ -60,6 +60,9 @@ struct Cli {
     /// Optional Password for the encryption of the wallet.
     #[clap(name = "PASSWORD", long, short = 'p')]
     pub password: Option<String>,
+    /// Optional List of Nostr relays to connect to.
+    #[clap(long, value_delimiter = ',')]
+    pub nostr_relays: Option<Vec<String>>,
     /// When enabled (and built with `--features 'hotpath hotpath-alloc'`), this will:
     /// - write JSON reports under `{data_dir}/hotpath/`
     /// - print timing + alloc tables when each swap completes
@@ -109,6 +112,9 @@ fn main() -> Result<(), MakerError> {
     config.password = args.password;
     if let Some(tor_auth) = args.tor_auth {
         config.tor_auth_password = tor_auth;
+    }
+    if let Some(relays) = args.nostr_relays.filter(|r| !r.is_empty()) {
+        config.nostr_relays = relays;
     }
 
     // First run: discover available port and save to config
